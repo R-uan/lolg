@@ -1,5 +1,4 @@
 mod error;
-mod log;
 mod log_entry;
 
 use std::sync::Arc;
