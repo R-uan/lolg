@@ -3,11 +3,7 @@ mod log_entry;
 
 use std::sync::Arc;
 
-use tokio::{
-    io::AsyncWriteExt,
-    net::tcp::{OwnedReadHalf, OwnedWriteHalf},
-    sync::RwLock,
-};
+use tokio::{io::AsyncWriteExt, net::tcp::OwnedWriteHalf, sync::RwLock};
 
 use crate::{
     error::Error,
@@ -15,15 +11,13 @@ use crate::{
 };
 
 struct LogClient {
-    pub read: Arc<RwLock<OwnedReadHalf>>,
     pub write: Arc<RwLock<OwnedWriteHalf>>,
 }
 
 impl LogClient {
-    pub fn new(read_half: OwnedReadHalf, write_half: OwnedWriteHalf) -> Self {
-        let read = Arc::new(RwLock::new(read_half));
+    pub fn new(write_half: OwnedWriteHalf) -> Self {
         let write = Arc::new(RwLock::new(write_half));
-        return LogClient { read, write };
+        return LogClient { write };
     }
 
     pub async fn send(&self, bytes: &Vec<u8>) -> bool {
@@ -33,7 +27,7 @@ impl LogClient {
 }
 
 pub struct Lolg {
-    debug: bool,
+    debugging: bool,
     pub running: Arc<RwLock<bool>>,
     socket: tokio::net::TcpListener,
     clients: Arc<RwLock<Vec<LogClient>>>,
@@ -42,14 +36,14 @@ pub struct Lolg {
 impl Lolg {
     /// Initializes a Lolg instance with a TcpListener socket hosted locally.
     /// - `port`: port that the socket will be open at.
-    pub async fn init(port: u16, debug: bool) -> Result<Arc<Self>, Error> {
+    pub async fn init(port: u16, debugging: bool) -> Result<Arc<Self>, Error> {
         let host = std::net::Ipv4Addr::new(127, 0, 0, 1);
         let listener = tokio::net::TcpListener::bind((host, port))
             .await
             .map_err(|_| Error::SocketFailed(format!("{host}/{port}")))?;
 
         let lolg = Self {
-            debug,
+            debugging,
             socket: listener,
             running: Arc::new(RwLock::new(false)),
             clients: Arc::new(RwLock::new(Vec::new())),
@@ -66,11 +60,11 @@ impl Lolg {
                 match lolg.socket.accept().await {
                     Err(_) => {}
                     Ok((stream, addr)) => {
-                        let (read, write) = stream.into_split();
-                        let client = LogClient::new(read, write);
+                        let (_, write) = stream.into_split();
+                        let client = LogClient::new(write);
                         lolg.clients.write().await.push(client);
 
-                        if self.debug {
+                        if self.debugging {
                             let msg = format!("New log client has been connected ({addr})");
                             let entry = LogEntry::new(Level::Debug, &msg);
                             println!("{entry}");
@@ -81,10 +75,26 @@ impl Lolg {
         });
     }
 
+    pub async fn debug(&self, msg: &str) {
+        self.send(Level::Debug, msg).await;
+    }
+
+    pub async fn info(&self, msg: &str) {
+        self.send(Level::Info, msg).await;
+    }
+
+    pub async fn warn(&self, msg: &str) {
+        self.send(Level::Warning, msg).await;
+    }
+
+    pub async fn error(&self, msg: &str) {
+        self.send(Level::Error, msg).await;
+    }
+
     /// - Creates a log entry and sends it through the TCP stream as bytes.
     /// - Calls the `cleanup` function to remove clients that the packet couldn't be sent to.
     /// - If the debug option is on, logs the amount of successful deliveries.
-    pub async fn send(&self, level: Level, msg: &str) {
+    async fn send(&self, level: Level, msg: &str) {
         let entry = LogEntry::new(level, msg);
         let mut cleanup: Vec<usize> = Vec::new();
         let encode = entry.bytes();
@@ -96,7 +106,7 @@ impl Lolg {
             }
         }
 
-        if self.debug {
+        if self.debugging {
             println!("{entry}");
             let msg = format!(
                 "Entry has been sent to {}/{} clients",
@@ -118,7 +128,7 @@ impl Lolg {
             clients.remove(*index);
         }
 
-        if self.debug {
+        if self.debugging {
             let msg = format!("{} clients have cleaned up", targets.len());
             let debug = LogEntry::new(Level::Debug, &msg);
             println!("{debug}");
