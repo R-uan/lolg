@@ -98,28 +98,32 @@ impl Lolg {
     /// - If the debug option is on, logs the amount of successful deliveries.
     async fn send(&self, level: Level, msg: &str) {
         let entry = LogEntry::new(level, msg);
+        if self.debugging {
+            println!("{entry}");
+        }
         let mut cleanup: Vec<usize> = Vec::new();
         let encode = entry.bytes();
         let clients = self.clients.read().await;
-        for index in 0..clients.len() {
-            let client = &clients[index];
-            if !client.send(&encode).await {
-                cleanup.push(index);
+        if clients.len() > 0 {
+            for index in 0..clients.len() {
+                let client = &clients[index];
+                if !client.send(&encode).await {
+                    cleanup.push(index);
+                }
             }
-        }
 
-        if self.debugging {
-            println!("{entry}");
-            let msg = format!(
-                "Entry has been sent to {}/{} clients",
-                clients.len() - cleanup.len(),
-                &clients.len()
-            );
-            let debug = LogEntry::new(Level::Debug, &msg);
-            println!("{debug}");
-        }
+            if self.debugging {
+                let msg = format!(
+                    "Entry has been sent to {}/{} clients",
+                    clients.len() - cleanup.len(),
+                    &clients.len()
+                );
+                let debug = LogEntry::new(Level::Debug, &msg);
+                println!("{debug}");
+            }
 
-        self.cleanup(&cleanup).await;
+            self.cleanup(&cleanup).await;
+        }
     }
 
     /// - Removes target client(s) from the client pool.
