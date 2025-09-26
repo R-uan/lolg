@@ -49,6 +49,8 @@ impl Lolg {
             clients: Arc::new(RwLock::new(Vec::new())),
         };
 
+        lolg.debug(&format!("Lolg running on port: {port}")).await;
+
         return Ok(Arc::new(lolg));
     }
 
